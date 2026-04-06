@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
+from scipy import stats
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -327,8 +328,8 @@ if not uploaded:
 
 # ── Load & engineer ───────────────────────────────────────────────────────────
 @st.cache_data(show_spinner="Analysing dataset…")
-def load_and_engineer(file):
-    df = pd.read_csv(file)
+def load_and_engineer(file_bytes):
+    df = pd.read_csv(io.BytesIO(file_bytes))
     df["description"]     = df["description"].fillna("").astype(str)
     df["company_profile"] = df["company_profile"].fillna("").astype(str) \
                             if "company_profile" in df.columns else pd.Series([""] * len(df))
@@ -366,20 +367,20 @@ def load_and_engineer(file):
         lambda x: x.split(",")[-1].strip() if "," in x else x.strip())
     return df
 
-df = load_and_engineer(uploaded)
-df = df.sample(min(len(df), 5000), random_state=42)
+raw_bytes = uploaded.read()
+df = load_and_engineer(raw_bytes)
 
 # ── Data Merging (from main.py academic requirement) ─────────────────────────
 @st.cache_data(show_spinner=False)
-def get_merged(file):
-    _df = pd.read_csv(file)
+def get_merged(file_bytes):
+    _df = pd.read_csv(io.BytesIO(file_bytes))
     _df["title"] = _df["title"].fillna("Unknown").astype(str)
     temp = _df[["title", "fraudulent"]].copy()
     merged = pd.merge(_df, temp, on="title", how="left",
                       suffixes=("", "_merged"))
     return merged
 
-merged_df = get_merged(uploaded)
+merged_df = get_merged(raw_bytes)
 
 # ── Filter controls ───────────────────────────────────────────────────────────
 st.markdown(f"<div class='ctrl-panel'><div class='ctrl-title'>🎛 Filter Controls</div>",
@@ -612,7 +613,7 @@ with tabs[0]:
 
     st.markdown(f"<div class='sec'><span class='sec-num'>04</span> Correlation Heatmap</div>",
                 unsafe_allow_html=True)
-    num_df = filt.select_dtypes(include=np.number).sample(min(len(filt), 1000), random_state=42)
+    num_df = filt.select_dtypes(include=np.number)
     if len(num_df.columns) > 1:
         fig, ax = sfig(13, 5)
         corr = num_df.corr()
@@ -634,8 +635,8 @@ with tabs[1]:
     st.markdown(f"<div class='sec'><span class='sec-num'>05</span> Top Keywords — Fraudulent vs Legitimate</div>",
                 unsafe_allow_html=True)
 
-    fraud_texts = filt[filt["fraudulent"]==1]["description"].sample(min(len(filt[filt["fraudulent"]==1]), 1000), random_state=42).tolist()
-    legit_texts = filt[filt["fraudulent"]==0]["description"].sample(min(len(filt[filt["fraudulent"]==0]), 1000), random_state=42).tolist()
+    fraud_texts = filt[filt["fraudulent"]==1]["description"].tolist()
+    legit_texts = filt[filt["fraudulent"]==0]["description"].tolist()
 
     nlp_col1, nlp_col2 = st.columns(2)
 
@@ -1153,12 +1154,7 @@ with tabs[6]:
     real_lens = filt[filt["fraudulent"] == 0]["desc_len"].dropna()
 
     if len(fake_lens) > 1 and len(real_lens) > 1:
-        # Manual t-test (no scipy)
-        mean1, mean2 = fake_lens.mean(), real_lens.mean()
-        std1, std2 = fake_lens.std(), real_lens.std()
-        n1, n2 = len(fake_lens), len(real_lens)
-        t_stat = (mean1 - mean2) / np.sqrt((std1**2/n1) + (std2**2/n2))
-        p_value = 2 * (1 - 0.5 * (1 + np.sign(abs(t_stat))))  # approx
+        t_stat, p_value = stats.ttest_ind(fake_lens, real_lens)
         reject = p_value < 0.05
 
         ht1, ht2, ht3, ht4 = st.columns(4)

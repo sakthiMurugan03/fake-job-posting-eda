@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
+from scipy import stats
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -332,12 +333,18 @@ def load_and_engineer(file_bytes):
     df["description"]     = df["description"].fillna("").astype(str)
     df["company_profile"] = df["company_profile"].fillna("").astype(str) \
                             if "company_profile" in df.columns else pd.Series([""] * len(df))
+    df["requirements"]    = df["requirements"].fillna("").astype(str) \
+                            if "requirements" in df.columns else pd.Series([""] * len(df))
+    df["benefits"]        = df["benefits"].fillna("").astype(str) \
+                            if "benefits" in df.columns else pd.Series([""] * len(df))
     df["title"]           = df["title"].fillna("Unknown").astype(str)
     df["location"]        = df["location"].fillna("Unknown").astype(str) \
                             if "location" in df.columns else pd.Series(["Unknown"] * len(df))
     df["desc_len"]        = df["description"].apply(len)
     df["desc_words"]      = df["description"].apply(lambda x: len(x.split()))
     df["company_len"]     = df["company_profile"].apply(len)
+    df["req_len"]         = df["requirements"].apply(len)
+    df["benefits_len"]    = df["benefits"].apply(len)
     df["has_salary"]      = df["salary_range"].notna().astype(int) \
                             if "salary_range" in df.columns else 0
     df["has_questions"]   = df["description"].str.count(r'\?')
@@ -345,13 +352,16 @@ def load_and_engineer(file_bytes):
     df["caps_ratio"]      = df["description"].apply(
         lambda x: sum(1 for c in x if c.isupper()) / max(len(x), 1))
     df["url_count"]       = df["description"].str.count(r'http|www\.')
+    # Suspicious score (aligned with main.py: desc_len, company_len, req_len, has_company_logo)
     df["suspicious_score"] = (
         (df["desc_len"]    < 200).astype(int) +
         (df["company_len"] < 50).astype(int)  +
-        (df["has_company_logo"] == 0).astype(int) +
-        (df["telecommuting"]    == 1).astype(int)
+        (df["req_len"]     < 50).astype(int)  +
+        (df["has_company_logo"] == 0).astype(int)
     )
     df["fraud_label"] = df["fraudulent"].map({0: "Legitimate", 1: "Fraudulent"})
+    # Simulated time index (from main.py)
+    df["index_time"] = np.arange(len(df))
     # Extract country from location
     df["country"] = df["location"].apply(
         lambda x: x.split(",")[-1].strip() if "," in x else x.strip())
@@ -359,6 +369,18 @@ def load_and_engineer(file_bytes):
 
 raw_bytes = uploaded.read()
 df = load_and_engineer(raw_bytes)
+
+# ── Data Merging (from main.py academic requirement) ─────────────────────────
+@st.cache_data(show_spinner=False)
+def get_merged(file_bytes):
+    _df = pd.read_csv(io.BytesIO(file_bytes))
+    _df["title"] = _df["title"].fillna("Unknown").astype(str)
+    temp = _df[["title", "fraudulent"]].copy()
+    merged = pd.merge(_df, temp, on="title", how="left",
+                      suffixes=("", "_merged"))
+    return merged
+
+merged_df = get_merged(raw_bytes)
 
 # ── Filter controls ───────────────────────────────────────────────────────────
 st.markdown(f"<div class='ctrl-panel'><div class='ctrl-title'>🎛 Filter Controls</div>",
@@ -368,7 +390,7 @@ with fc1: fraud_filter  = st.selectbox("Job Type",   ["All","Real Only","Fake On
 with fc2: logo_filter   = st.selectbox("Company Logo",["All","Has Logo","No Logo"])
 with fc3: remote_filter = st.selectbox("Remote",     ["All","Remote Only","Non Remote"])
 with fc4: score_min     = st.selectbox("Min Score",  [0,1,2,3,4])
-with fc5: 
+with fc5:
     emp_opts = ["All"] + sorted(df["employment_type"].dropna().unique().tolist()) \
                if "employment_type" in df.columns else ["All"]
     emp_filter = st.selectbox("Employment", emp_opts)
@@ -439,6 +461,7 @@ tabs = st.tabs([
     "📋 Categories",
     "⚖️ Compare",
     "🚨 Threat Feed",
+    "🔬 Statistics",   # ← NEW tab (from main.py)
     "🗂 Raw Data",
 ])
 
@@ -519,7 +542,6 @@ with tabs[0]:
         fig.tight_layout(); st.pyplot(fig); plt.close()
 
     with c3:
-        # Fraud rate by suspicious score
         sr = filt.groupby("suspicious_score")["fraudulent"].mean()*100
         fig, ax = sfig(5, 4)
         lc = ax.plot(sr.index, sr.values, color=ROSE, linewidth=2.5,
@@ -863,7 +885,7 @@ with tabs[3]:
                 fig.tight_layout(); st.pyplot(fig); plt.close()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 5 · COMPARE (side-by-side real vs fake)
+# TAB 5 · COMPARE
 # ─────────────────────────────────────────────────────────────────────────────
 with tabs[4]:
     st.markdown(f"<div class='sec'><span class='sec-num'>★</span> Side-by-Side Job Comparison</div>",
@@ -926,7 +948,6 @@ with tabs[4]:
         </div>
         """, unsafe_allow_html=True)
 
-        # Radar-style comparison bar
         st.markdown(f"<div class='sec'><span class='sec-num'>★</span> Feature Comparison</div>",
                     unsafe_allow_html=True)
 
@@ -970,7 +991,6 @@ with tabs[5]:
         <div class='sus-lbl'>Live threat feed · {sus_n} postings with score ≥ 3</div>
     </div>""", unsafe_allow_html=True)
 
-    # Score breakdown mini-stats
     sc1,sc2,sc3,sc4 = st.columns(4)
     for s, label, col_obj, color in [
         (1,"Score 1",sc1,BLUE),(2,"Score 2",sc2,ACCENT),
@@ -1026,9 +1046,178 @@ with tabs[5]:
     </div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 7 · RAW DATA
+# TAB 7 · STATISTICS  ← NEW: merging, time-variant, hypothesis test (from main.py)
 # ─────────────────────────────────────────────────────────────────────────────
 with tabs[6]:
+
+    # ── Section A: Data Merging ───────────────────────────────────────────────
+    st.markdown(f"<div class='sec'><span class='sec-num'>A</span> Data Merging</div>",
+                unsafe_allow_html=True)
+    st.markdown(f"""<div class='ib blue'>
+      A self-join on <strong>title</strong> produces a <code>fraudulent_merged</code> column
+      alongside the original. This mirrors the academic <code>pd.merge()</code> requirement
+      from <code>main.py</code> and is useful for cross-referencing repeated titles.
+    </div>""", unsafe_allow_html=True)
+
+    merge_preview_cols = [c for c in ["title", "fraudulent", "fraudulent_merged"]
+                          if c in merged_df.columns]
+    st.dataframe(merged_df[merge_preview_cols].head(20),
+                 use_container_width=True, height=280)
+
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(f"""
+        <div class='kpi-card or'>
+          <div class='kpi-label'>Merged Rows</div>
+          <div class='kpi-value'>{len(merged_df):,}</div>
+          <div class='kpi-sub'>Left join on title</div>
+        </div>""", unsafe_allow_html=True)
+    with m2:
+        st.markdown(f"""
+        <div class='kpi-card bl'>
+          <div class='kpi-label'>Original Columns</div>
+          <div class='kpi-value'>{len(merged_df.columns):,}</div>
+          <div class='kpi-sub'>Including _merged suffix</div>
+        </div>""", unsafe_allow_html=True)
+    with m3:
+        dup_titles = int((merged_df["title"].value_counts() > 1).sum())
+        st.markdown(f"""
+        <div class='kpi-card em'>
+          <div class='kpi-label'>Duplicate Titles</div>
+          <div class='kpi-value'>{dup_titles:,}</div>
+          <div class='kpi-sub'>Titles appearing 2+ times</div>
+        </div>""", unsafe_allow_html=True)
+
+    # OLAP pivot from main.py
+    st.markdown(f"<div class='sec'><span class='sec-num'>A2</span> OLAP Pivot — Avg Description Length</div>",
+                unsafe_allow_html=True)
+    olap_pivot = pd.pivot_table(
+        filt,
+        values="desc_len",
+        index="has_company_logo",
+        columns="fraudulent",
+        aggfunc=np.mean
+    ).round(1)
+    olap_pivot.index = ["No Logo" if i == 0 else "Has Logo" for i in olap_pivot.index]
+    olap_pivot.columns = ["Legitimate" if c == 0 else "Fraudulent" for c in olap_pivot.columns]
+    st.dataframe(olap_pivot, use_container_width=True)
+    st.markdown(f"""<div class='ib'>
+      Fraud rate by remote: <strong>{filt.groupby("telecommuting")["fraudulent"].mean().to_dict()}</strong> &nbsp;|&nbsp;
+      Fraud rate by logo: <strong>{filt.groupby("has_company_logo")["fraudulent"].mean().to_dict()}</strong>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Section B: Time-Variant Analysis ─────────────────────────────────────
+    st.markdown(f"<div class='sec'><span class='sec-num'>B</span> Time-Variant Analysis (Simulated)</div>",
+                unsafe_allow_html=True)
+    st.markdown(f"""<div class='ib'>
+      The dataset has no real timestamp column. A sequential <strong>index_time</strong> is
+      simulated (row order) to show how description length varies across the dataset —
+      a proxy for temporal drift or data collection batches.
+    </div>""", unsafe_allow_html=True)
+
+    tv1, tv2 = st.columns([2, 1])
+    with tv1:
+        # Full time-variant line (desc_len over index)
+        plot_df = filt[["index_time", "desc_len", "fraudulent"]].copy()
+        fig, ax = sfig(10, 4)
+        for fraud_val, col, lbl in [(0, GREEN, "Legitimate"), (1, ROSE, "Fraudulent")]:
+            sub = plot_df[plot_df["fraudulent"] == fraud_val].sort_values("index_time")
+            if len(sub) > 500:
+                # Downsample for performance
+                sub = sub.iloc[::max(1, len(sub)//500)]
+            ax.plot(sub["index_time"], sub["desc_len"],
+                    color=col, alpha=.55, linewidth=.8, label=lbl)
+        ax.set_title("Description Length over Dataset Index (Time-Variant Proxy)")
+        ax.set_xlabel("Index (simulated time)"); ax.set_ylabel("Description Characters")
+        ax.legend(); fig.tight_layout(); st.pyplot(fig); plt.close()
+
+    with tv2:
+        # Rolling mean (window=200) on full df for smoother trend
+        roll_df = filt.sort_values("index_time")[["index_time","desc_len"]].copy()
+        roll_df["rolling_mean"] = roll_df["desc_len"].rolling(window=200, min_periods=10).mean()
+        fig, ax = sfig(5, 4)
+        ax.plot(roll_df["index_time"], roll_df["rolling_mean"],
+                color=ACCENT, linewidth=1.8, label="Rolling mean (200)")
+        ax.set_title("Rolling Mean — Description Length")
+        ax.set_xlabel("Index"); ax.set_ylabel("Chars")
+        ax.legend(); fig.tight_layout(); st.pyplot(fig); plt.close()
+
+    # ── Section C: Hypothesis Testing ────────────────────────────────────────
+    st.markdown(f"<div class='sec'><span class='sec-num'>C</span> Hypothesis Testing — Description Length</div>",
+                unsafe_allow_html=True)
+    st.markdown(f"""<div class='ib'>
+      <strong>H₀:</strong> Fake and real job postings have the <em>same</em> mean description length.<br>
+      <strong>H₁:</strong> Fake job postings have a <em>different</em> mean description length.
+    </div>""", unsafe_allow_html=True)
+
+    fake_lens = filt[filt["fraudulent"] == 1]["desc_len"].dropna()
+    real_lens = filt[filt["fraudulent"] == 0]["desc_len"].dropna()
+
+    if len(fake_lens) > 1 and len(real_lens) > 1:
+        t_stat, p_value = stats.ttest_ind(fake_lens, real_lens)
+        reject = p_value < 0.05
+
+        ht1, ht2, ht3, ht4 = st.columns(4)
+        ht_cards = [
+            ("T-Statistic",  f"{t_stat:.4f}", "Welch's two-sample t-test", BLUE),
+            ("P-Value",      f"{p_value:.2e}", "α = 0.05 threshold",        ROSE if reject else GREEN),
+            ("Fake Mean",    f"{fake_lens.mean():.0f} chars", f"n = {len(fake_lens):,}", ROSE),
+            ("Legit Mean",   f"{real_lens.mean():.0f} chars", f"n = {len(real_lens):,}", GREEN),
+        ]
+        for (lbl, val, sub, col), col_obj in zip(ht_cards, [ht1, ht2, ht3, ht4]):
+            with col_obj:
+                st.markdown(f"""
+                <div class='kpi-card' style='border-top-color:{col};'>
+                  <div class='kpi-label'>{lbl}</div>
+                  <div class='kpi-value' style='font-size:1.3rem;'>{val}</div>
+                  <div class='kpi-sub'>{sub}</div>
+                </div>""", unsafe_allow_html=True)
+
+        verdict_color = ROSE if reject else GREEN
+        verdict_text  = "✗ Reject H₀" if reject else "✓ Fail to Reject H₀"
+        verdict_msg   = (
+            f"p = {p_value:.2e} &lt; 0.05 — statistically significant difference. "
+            f"Fake postings are <strong>{abs(real_lens.mean() - fake_lens.mean()):.0f} chars shorter</strong> on average."
+            if reject else
+            f"p = {p_value:.2e} ≥ 0.05 — no statistically significant difference detected."
+        )
+        st.markdown(f"""<div class='ib' style='border-left-color:{verdict_color};background:rgba(0,0,0,.03);'>
+          <strong style='color:{verdict_color};font-size:.8rem;'>{verdict_text}</strong><br>{verdict_msg}
+        </div>""", unsafe_allow_html=True)
+
+        # Visualise the distributions side by side
+        ht_v1, ht_v2 = st.columns(2)
+        with ht_v1:
+            fig, ax = sfig(6, 4)
+            ax.hist(fake_lens, bins=50, color=ROSE,  alpha=.6, label="Fraudulent", edgecolor='none')
+            ax.hist(real_lens, bins=50, color=GREEN, alpha=.5, label="Legitimate", edgecolor='none')
+            ax.axvline(fake_lens.mean(), color=ROSE,  linestyle='--', linewidth=1.4,
+                       label=f"Fake μ={fake_lens.mean():.0f}")
+            ax.axvline(real_lens.mean(), color=GREEN, linestyle='--', linewidth=1.4,
+                       label=f"Legit μ={real_lens.mean():.0f}")
+            ax.set_title("Desc Length Distribution (Hypothesis Test)")
+            ax.set_xlabel("Characters"); ax.set_ylabel("Frequency")
+            ax.legend(fontsize=7); fig.tight_layout(); st.pyplot(fig); plt.close()
+
+        with ht_v2:
+            fig, ax = sfig(6, 4)
+            bp = ax.boxplot([fake_lens, real_lens], patch_artist=True, widths=.45,
+                            medianprops=dict(color=TXT_PRI, linewidth=2),
+                            whiskerprops=dict(color=TXT_MUT),
+                            capprops=dict(color=TXT_MUT),
+                            flierprops=dict(marker='.', color=TXT_MUT, alpha=.2, markersize=2))
+            bp["boxes"][0].set_facecolor(ROSE+"30");  bp["boxes"][0].set_edgecolor(ROSE)
+            bp["boxes"][1].set_facecolor(GREEN+"30"); bp["boxes"][1].set_edgecolor(GREEN)
+            ax.set_xticks([1,2]); ax.set_xticklabels(["Fraudulent","Legitimate"], color=TXT_PRI)
+            ax.set_title("Boxplot — Desc Length by Class")
+            ax.set_ylabel("Characters"); fig.tight_layout(); st.pyplot(fig); plt.close()
+    else:
+        st.info("Not enough data in current filter for hypothesis testing (need both classes).")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 8 · RAW DATA
+# ─────────────────────────────────────────────────────────────────────────────
+with tabs[7]:
     st.markdown(f"<div class='sec'><span class='sec-num'>★</span> Dataset Preview & Summary</div>",
                 unsafe_allow_html=True)
 

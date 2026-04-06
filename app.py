@@ -367,6 +367,7 @@ def load_and_engineer(file):
     return df
 
 df = load_and_engineer(uploaded)
+df = df.sample(min(len(df), 5000), random_state=42)
 
 # ── Data Merging (from main.py academic requirement) ─────────────────────────
 @st.cache_data(show_spinner=False)
@@ -611,7 +612,7 @@ with tabs[0]:
 
     st.markdown(f"<div class='sec'><span class='sec-num'>04</span> Correlation Heatmap</div>",
                 unsafe_allow_html=True)
-    num_df = filt.select_dtypes(include=np.number)
+    num_df = filt.select_dtypes(include=np.number).sample(min(len(filt), 1000), random_state=42)
     if len(num_df.columns) > 1:
         fig, ax = sfig(13, 5)
         corr = num_df.corr()
@@ -633,8 +634,8 @@ with tabs[1]:
     st.markdown(f"<div class='sec'><span class='sec-num'>05</span> Top Keywords — Fraudulent vs Legitimate</div>",
                 unsafe_allow_html=True)
 
-    fraud_texts = filt[filt["fraudulent"]==1]["description"].tolist()
-    legit_texts = filt[filt["fraudulent"]==0]["description"].tolist()
+    fraud_texts = filt[filt["fraudulent"]==1]["description"].sample(min(len(filt[filt["fraudulent"]==1]), 1000), random_state=42).tolist()
+    legit_texts = filt[filt["fraudulent"]==0]["description"].sample(min(len(filt[filt["fraudulent"]==0]), 1000), random_state=42).tolist()
 
     nlp_col1, nlp_col2 = st.columns(2)
 

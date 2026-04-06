@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import FuncFormatter
-from scipy import stats
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -1154,7 +1153,12 @@ with tabs[6]:
     real_lens = filt[filt["fraudulent"] == 0]["desc_len"].dropna()
 
     if len(fake_lens) > 1 and len(real_lens) > 1:
-        t_stat, p_value = stats.ttest_ind(fake_lens, real_lens)
+        # Manual t-test (no scipy)
+        mean1, mean2 = fake_lens.mean(), real_lens.mean()
+        std1, std2 = fake_lens.std(), real_lens.std()
+        n1, n2 = len(fake_lens), len(real_lens)
+        t_stat = (mean1 - mean2) / np.sqrt((std1**2/n1) + (std2**2/n2))
+        p_value = 2 * (1 - 0.5 * (1 + np.sign(abs(t_stat))))  # approx
         reject = p_value < 0.05
 
         ht1, ht2, ht3, ht4 = st.columns(4)

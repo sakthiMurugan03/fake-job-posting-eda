@@ -327,8 +327,8 @@ if not uploaded:
 
 # ── Load & engineer ───────────────────────────────────────────────────────────
 @st.cache_data(show_spinner="Analysing dataset…")
-def load_and_engineer(file_bytes):
-    df = pd.read_csv(io.BytesIO(file_bytes))
+def load_and_engineer(file):
+    df = pd.read_csv(file)
     df["description"]     = df["description"].fillna("").astype(str)
     df["company_profile"] = df["company_profile"].fillna("").astype(str) \
                             if "company_profile" in df.columns else pd.Series([""] * len(df))
@@ -366,20 +366,19 @@ def load_and_engineer(file_bytes):
         lambda x: x.split(",")[-1].strip() if "," in x else x.strip())
     return df
 
-raw_bytes = uploaded.read()
-df = load_and_engineer(raw_bytes)
+df = load_and_engineer(uploaded)
 
 # ── Data Merging (from main.py academic requirement) ─────────────────────────
 @st.cache_data(show_spinner=False)
-def get_merged(file_bytes):
-    _df = pd.read_csv(io.BytesIO(file_bytes))
+def get_merged(file):
+    _df = pd.read_csv(file)
     _df["title"] = _df["title"].fillna("Unknown").astype(str)
     temp = _df[["title", "fraudulent"]].copy()
     merged = pd.merge(_df, temp, on="title", how="left",
                       suffixes=("", "_merged"))
     return merged
 
-merged_df = get_merged(raw_bytes)
+merged_df = get_merged(uploaded)
 
 # ── Filter controls ───────────────────────────────────────────────────────────
 st.markdown(f"<div class='ctrl-panel'><div class='ctrl-title'>🎛 Filter Controls</div>",
